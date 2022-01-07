@@ -3,8 +3,8 @@ obj-m += hello-2.o
 obj-m += hello-3.o
 obj-m += hello-4.o
 obj-m += hello-5.o
-obj-m += start.o
-obj-m += stop.o
+obj-m += startstop.o
+startstop-objs := start.o stop.o
 obj-m += chardev.o
 obj-m += procfs1.o
 obj-m += procfs2.o
@@ -30,9 +30,20 @@ obj-m += example_mutex.o
 obj-m += bottomhalf.o
 obj-m += ioctl.o
 
+PWD := $(CURDIR)
+
+ifeq ($(CONFIG_STATUS_CHECK_GCC),y)
+CC=$(STATUS_CHECK_GCC)
+ccflags-y += -fanalyzer
+endif
+
 all:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build CC=$(CC) M=$(PWD) modules
 
 clean:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build CC=$(CC) M=$(PWD) clean
 	$(RM) other/cat_noblock *.plist
+
+indent:
+	clang-format -i *[.ch]
+	clang-format -i other/*[.ch]

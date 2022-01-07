@@ -82,7 +82,11 @@ Jim Huang upgraded to recent kernel versions (v5.x) and revised the \LaTeX\ docu
 \subsection{Acknowledgements}
 \label{sec:acknowledgements}
 
-The following people have contributed corrections or good suggestions: Ignacio Martin, David Porter, Daniele Paolo Scarpazza, Dimo Velev, Francois Audeon, Horst Schirmeier, and Roman Lakeev.
+The following people have contributed corrections or good suggestions: 
+
+\begin{flushleft}
+\input{contrib}
+\end{flushleft}
 
 \subsection{What Is A Kernel Module?}
 \label{sec:kernelmod}
@@ -153,13 +157,12 @@ Rest assured, after you get over the initial hurdle of doing it for the first ti
 
   \item Using X Window System.
   \label{sec:using_x}
-        It is highly recommended that you extract, compile and load all the examples this guide discusses.
-        It is also highly recommended you do this from a console.
+        It is highly recommended that you extract, compile and load all the examples this guide discusses from a console.
         You should not be working on this stuff in X Window System.
 
         Modules can not print to the screen like \cpp|printf()| can, but they can log information and warnings, which ends up being printed on your screen, but only on a console.
         If you \sh|insmod| a module from an xterm, the information and warnings will be logged, but only to your systemd journal.
-        You will not see it unless you look through your \sh|journalctl|.
+        You will not see it unless you look through your \sh|journalctl| .
         See \ref{sec:helloworld} for details.
         To have immediate access to this information, do all your work from the console.
 \end{enumerate}
@@ -216,6 +219,8 @@ Now you will need a \verb|Makefile|. If you copy and paste this, change the inde
 \begin{code}
 obj-m += hello-1.o
 
+PWD := $(CURDIR)
+
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
@@ -223,15 +228,111 @@ clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 \end{code}
 
-And finally just:
+In \verb|Makefile|, \verb|$(CURDIR)| can set to the absolute pathname of the current working directory(after all \verb|-C| options are processed, if any). 
+See more about \verb|CURDIR| in \href{https://www.gnu.org/software/make/manual/make.html}{GNU make manual}.
+
+And finally, just run \verb|make| directly.
+
 \begin{codebash}
 make
 \end{codebash}
 
+If there is no \verb|PWD := $(CURDIR)| statement in Makefile, then it may not compile correctly with \verb|sudo make|.
+Because some environment variables are specified by the security policy, they can't be inherited.
+The default security policy is \verb|sudoers|.
+In the \verb|sudoers| security policy, \verb|env_reset| is enabled by default, which restricts environment variables. 
+Specifically, path variables are not retained from the user environment, they are set to default values (For more information see: \href{https://www.sudo.ws/docs/man/sudoers.man/}{sudoers manual}).
+You can see the environment variable settings by:
+
+\begin{verbatim}
+$ sudo -s
+# sudo -V
+\end{verbatim}
+
+Here is a simple Makefile as an example to demonstrate the problem mentioned above.
+
+\begin{code}
+all:
+	echo $(PWD)
+\end{code}
+
+Then, we can use \verb|-p| flag to print out the environment variable values from the Makefile.
+
+\begin{verbatim}
+$ make -p | grep PWD
+PWD = /home/ubuntu/temp
+OLDPWD = /home/ubuntu
+	echo $(PWD)
+\end{verbatim}
+
+The \verb|PWD| variable won't be inherited with \verb|sudo|.
+
+\begin{verbatim}
+$ sudo make -p | grep PWD
+	echo $(PWD)
+\end{verbatim}
+
+However, there are three ways to solve this problem.
+
+\begin{enumerate}
+  \item {
+  You can use the \verb|-E| flag to temporarily preserve them.
+  
+  \begin{codebash}
+    $ sudo -E make -p | grep PWD
+    PWD = /home/ubuntu/temp
+    OLDPWD = /home/ubuntu
+    echo $(PWD)
+  \end{codebash}
+  }
+
+  \item {
+  You can set the \verb|env_reset| disabled by editing the \verb|/etc/sudoers| with root and \verb|visudo|. 
+
+  \begin{code}
+  ## sudoers file.
+  ## 
+  ...
+  Defaults env_reset
+  ## Change env_reset to !env_reset in previous line to keep all environment variables
+  \end{code}
+
+  Then execute \verb|env| and \verb|sudo env| individually.
+
+  \begin{codebash}
+    # disable the env_reset
+    echo "user:" > non-env_reset.log; env >> non-env_reset.log
+    echo "root:" >> non-env_reset.log; sudo env >> non-env_reset.log
+    # enable the env_reset
+    echo "user:" > env_reset.log; env >> env_reset.log
+    echo "root:" >> env_reset.log; sudo env >> env_reset.log
+  \end{codebash}
+
+  You can view and compare these logs to find differences between \verb|env_reset| and \verb|!env_reset|. 
+  }
+
+  \item {You can preserve environment variables by appending them to \verb|env_keep| in \verb|/etc/sudoers|. 
+  
+  \begin{code}
+  ## sudoers file.
+  ##
+  ...
+  Defaults env_keep += ``ftp_proxy http_proxy https_proxy no_proxy PWD''
+  \end{code}
+
+  After finishing setting modification, you can check the environment variable settings by:
+
+  \begin{verbatim}
+    $ sudo -s
+    # sudo -V
+  \end{verbatim}
+  }
+\end{enumerate}
+
 If all goes smoothly you should then find that you have a compiled \verb|hello-1.ko| module.
 You can find info on it with the command:
 \begin{codebash}
-sudo modinfo hello-1.ko
+modinfo hello-1.ko
 \end{codebash}
 
 At this point the command:
@@ -324,6 +425,8 @@ So now we have two real kernel modules under our belt. Adding another module is 
 obj-m += hello-1.o
 obj-m += hello-2.o
 
+PWD := $(CURDIR)
+
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
@@ -411,34 +514,38 @@ It takes two parameters: a variable name and a free form string describing that 
 \samplec{examples/hello-5.c}
 
 I would recommend playing around with this code:
-\begin{code}
-$ sudo insmod hello-5.ko mystring="bebop" myintArray=-1
+\begin{verbatim}
+$ sudo insmod hello-5.ko mystring="bebop" myintarray=-1
+$ sudo dmesg -t | tail -7
 myshort is a short integer: 1
 myint is an integer: 420
 mylong is a long integer: 9999
 mystring is a string: bebop
-myintArray[0] = -1
-myintArray[1] = 420
-got 1 arguments for myintArray.
+myintarray[0] = -1
+myintarray[1] = 420
+got 1 arguments for myintarray.
 
 $ sudo rmmod hello-5
+$ sudo dmesg -t | tail -1
 Goodbye, world 5
 
-$ sudo insmod hello-5.ko mystring="supercalifragilisticexpialidocious" myintArray=-1,-1
+$ sudo insmod hello-5.ko mystring="supercalifragilisticexpialidocious" myintarray=-1,-1
+$ sudo dmesg -t | tail -7
 myshort is a short integer: 1
 myint is an integer: 420
 mylong is a long integer: 9999
 mystring is a string: supercalifragilisticexpialidocious
-myintArray[0] = -1
-myintArray[1] = -1
-got 2 arguments for myintArray.
+myintarray[0] = -1
+myintarray[1] = -1
+got 2 arguments for myintarray.
 
 $ sudo rmmod hello-5
+$ sudo dmesg -t | tail -1
 Goodbye, world 5
 
 $ sudo insmod hello-5.ko mylong=hello
-hello-5.o: invalid argument syntax for mylong: 'h'
-\end{code}
+insmod: ERROR: could not insert module hello-5.ko: Invalid parameters
+\end{verbatim}
 
 \subsection{Modules Spanning Multiple Files}
 \label{modfiles}
@@ -460,6 +567,8 @@ obj-m += hello-4.o
 obj-m += hello-5.o
 obj-m += startstop.o
 startstop-objs := start.o stop.o
+
+PWD := $(CURDIR)
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
@@ -560,7 +669,7 @@ $ make
   HOSTLD  scripts/kconfig/conf
 \end{verbatim}
 
-If you do not desire to actually compile the kernel, you can interrupt the build process (CTRL-C) just after the SPLIT line, because at that time, the files you need will be are ready.
+If you do not desire to actually compile the kernel, you can interrupt the build process (CTRL-C) just after the SPLIT line, because at that time, the files you need are ready.
 Now you can turn back to the directory of your module and compile it: It will be built exactly according to your current kernel settings, and it will load into it without any errors.
 
 \section{Preliminaries}
@@ -836,6 +945,9 @@ The meaning is clear, and you should be aware that any member of the structure w
 
 An instance of \cpp|struct file_operations| containing pointers to functions that are used to implement \cpp|read|, \cpp|write|, \cpp|open|, \ldots{} system calls is commonly named \cpp|fops|.
 
+Since Linux v3.14, the read, write and seek operations are guaranteed for thread-safe by using the \cpp|f_pos| specific lock, which makes the file position update to become the mutual exclusion.
+So, we can safely implement those operations without unnecessary locking.
+
 Since Linux v5.6, the \cpp|proc_ops| structure was introduced to replace the use of the \cpp|file_operations| structure when registering proc handlers.
 
 \subsection{The file structure}
@@ -870,7 +982,7 @@ You do this by using the \cpp|register_chrdev| function, defined by \src{include
 int register_chrdev(unsigned int major, const char *name, struct file_operations *fops);
 \end{code}
 
-where unsigned int major is the major number you want to request, \cpp|const char *name| is the name of the device as it will appear in \verb|/proc/devices| and \cpp|struct file_operations *fops| is a pointer to the \cpp|file_operations| table for your driver.
+Where unsigned int major is the major number you want to request, \cpp|const char *name| is the name of the device as it will appear in \verb|/proc/devices| and \cpp|struct file_operations *fops| is a pointer to the \cpp|file_operations| table for your driver.
 A negative return value means the registration failed. Note that we didn't pass the minor number to \cpp|register_chrdev|.
 That is because the kernel doesn't care about the minor number; only our driver uses it.
 
@@ -885,6 +997,43 @@ There are a couple of ways to do this.
 First, the driver itself can print the newly assigned number and we can make the device file by hand.
 Second, the newly registered device will have an entry in \verb|/proc/devices|, and we can either make the device file by hand or write a shell script to read the file in and make the device file.
 The third method is that we can have our driver make the device file using the \cpp|device_create| function after a successful registration and \cpp|device_destroy| during the call to \cpp|cleanup_module|.
+
+However, \cpp|register_chrdev()| would occupy a range of minor numbers associated with the given major.
+The recommended way to reduce waste for char device registration is using cdev interface.
+
+The newer interface completes the char device registration in two distinct steps.
+First, we should register a range of device numbers, which can be completed with \cpp|register_chrdev_region| or \cpp|alloc_chrdev_region|.
+
+\begin{code}
+int register_chrdev_region(dev_t from, unsigned count, const char *name);
+int alloc_chrdev_region(dev_t *dev, unsigned baseminor, unsigned count, const char *name);
+\end{code}
+
+The choose of two different functions depend on whether you know the major numbers for your device.
+Using \cpp|register_chrdev_region| if you know the device major number and \cpp|alloc_chrdev_region| if you would like to allocate a dynamicly-allocated major number.
+
+Second, we should initialize the data structure \cpp|struct cdev| for our char device and associate it with the device numbers.
+To initialize the \cpp|struct cdev|, we can achieve by the similar sequence of the following codes.
+
+\begin{code}
+struct cdev *my_dev = cdev_alloc();
+my_cdev->ops = &my_fops;
+\end{code}
+
+However, the common usage pattern will embed the \cpp|struct cdev| within a device-specific structure of your own.
+In this case, we'll need \cpp|cdev_init| for the initialization.
+
+\begin{code}
+void cdev_init(struct cdev *cdev, const struct file_operations *fops);
+\end{code}
+
+Once we finish the initialization, we can add the char device to the system by using the \cpp|cdev_add|.
+
+\begin{code}
+int cdev_add(struct cdev *p, dev_t dev, unsigned count);
+\end{code}
+
+To find a example using the interface, you can see \verb|ioctl.c| described in section \ref{sec:device_files}.
 
 \subsection{Unregistering A Device}
 \label{sec:unregister_device}
@@ -912,9 +1061,9 @@ It is important to keep the counter accurate; if you ever do lose track of the c
 This is bound to happen to you sooner or later during a module's development.
 
 \subsection{chardev.c}
-\label{sec:org7ce767e}
+\label{sec:chardev_c}
 The next code sample creates a char driver named \verb|chardev|.
-You can cat its device file.
+You can dump its device file.
 
 \begin{codebash}
 cat /proc/devices
@@ -924,6 +1073,13 @@ cat /proc/devices
 We do not support writing to the file (like \sh|echo "hi" > /dev/hello|), but catch these attempts and tell the user that the operation is not supported.
 Don't worry if you don't see what we do with the data we read into the buffer; we don't do much with it.
 We simply read in the data and print a message acknowledging that we received it.
+
+In the multiple-threaded environment, without any protection, concurrent access to the same memory may lead to the race condition, and will not preserve the performance.
+In the kernel module, this problem may happen due to multiple instances accessing the shared resources.
+Therefore, a solution is to enforce the exclusive access.
+We use atomic Compare-And-Swap (CAS) to maintain the states, \cpp|CDEV_NOT_USED| and \cpp|CDEV_EXCLUSIVE_OPEN|, to determine whether the file is currently opened by someone or not.
+CAS compares the contents of a memory location with the expected value and, only if they are the same, modifies the contents of that memory location to the desired value.
+See more concurrency details in the \ref{sec:synchronization} section.
 
 \samplec{examples/chardev.c}
 
@@ -946,7 +1102,7 @@ Originally designed to allow easy access to information about processes (hence t
 The method to use the proc file system is very similar to the one used with device drivers --- a structure is created with all the information needed for the \verb|/proc| file, including pointers to any handler functions (in our case there is only one, the one called when somebody attempts to read from the \verb|/proc| file).
 Then, \cpp|init_module| registers the structure with the kernel and \cpp|cleanup_module| unregisters it.
 
-Normal file systems are located on a disk, rather than just in memory (which is where \verb|/proc| is), and in that case the inode number is a pointer to a disk location where the file's index-node (inode for short) is located.
+Normal file systems are located on a disk, rather than just in memory (which is where \verb|/proc| is), and in that case the index-node (inode for short) number is a pointer to a disk location where the file's inode is located.
 The inode contains information about the file, for example the file's permissions, together with a pointer to the disk location or locations where the file's data can be found.
 
 Because we don't get called when the file is opened or closed, there's nowhere for us to put \cpp|try_module_get| and \cpp|module_put| in this module, and if the file is opened and then the module is removed, there's no way to avoid the consequences.
@@ -1048,7 +1204,7 @@ That means that at the end of function \cpp|stop()|, the function \cpp|start()| 
 This loop finishes when the function \cpp|start()| returns \cpp|NULL|.
 You can see a scheme of this in the Figure~\ref{img:seqfile}.
 
-\begin{figure}
+\begin{figure}[h]
   \center
   \begin{tikzpicture}[node distance=2cm, thick]
     \node (start) [startstop] {start() treatment};
@@ -1158,6 +1314,9 @@ In the example below, the header file is chardev.h and the program which uses it
 If you want to use ioctls in your own kernel modules, it is best to receive an official ioctl assignment, so if you accidentally get somebody else's ioctls, or if they get yours, you'll know something is wrong.
 For more information, consult the kernel source tree at \src{Documentation/userspace-api/ioctl/ioctl-number.rst}.
 
+Also, we need to be careful that concurrent access to the shared resources will lead to the race condition.
+The solution is using atomic Compare-And-Swap (CAS), which we mentioned at \ref{sec:chardev_c} section, to enforce the exclusive access.
+
 \samplec{examples/chardev2.c}
 
 \samplec{examples/chardev.h}
@@ -1204,6 +1363,100 @@ If you want to read this code, it is at the source file \verb|arch/$(architectur
 So, if we want to change the way a certain system call works, what we need to do is to write our own function to implement it (usually by adding a bit of our own code, and then calling the original function) and then change the pointer at \cpp|sys_call_table| to point to our function.
 Because we might be removed later and we don't want to leave the system in an unstable state, it's important for \cpp|cleanup_module| to restore the table to its original state.
 
+To modify the content of \cpp|sys_call_table|, we need to consider the control register.
+A control register is a processor register that changes or controls the general behavior of the CPU.
+For x86 architecture, the \verb|cr0| register has various control flags that modify the basic operation of the processor.
+The \verb|WP| flag in \verb|cr0| stands for write protection.
+Once the \verb|WP| flag is set, the processor disallows further write attempts to the read-only sections
+Therefore, we must disable the \verb|WP| flag before modifying \cpp|sys_call_table|.
+Since Linux v5.3, the \cpp|write_cr0| function cannot be used because of the sensitive \verb|cr0| bits pinned by the security issue, the attacker may write into CPU control registers to disable CPU protections like write protection.
+As a result, we have to provide the custom assembly routine to bypass it.
+
+However, \cpp|sys_call_table| symbol is unexported to prevent misuse.
+But there have few ways to get the symbol, manual symbol lookup and \cpp|kallsyms_lookup_name|.
+Here we use both depend on the kernel version.
+
+Because of the \textit{control-flow integrity}, which is a technique to prevent the redirect execution code from the attacker, for making sure that the indirect calls go to the expected addresses and the return addresses are not changed.
+Since Linux v5.7, the kernel patched the series of \textit{control-flow enforcement} (CET) for x86, and some configurations of GCC, like GCC versions 9 and 10 in Ubuntu, will add with CET (the \verb|-fcf-protection| option) in the kernel by default.
+Using that GCC to compile the kernel with retpoline off may result in CET being enabled in the kernel.
+You can use the following command to check out the \verb|-fcf-protection| option is enabled or not:
+\begin{verbatim}
+$ gcc -v -Q -O2 --help=target | grep protection
+Using built-in specs.
+COLLECT_GCC=gcc
+COLLECT_LTO_WRAPPER=/usr/lib/gcc/x86_64-linux-gnu/9/lto-wrapper
+...
+gcc version 9.3.0 (Ubuntu 9.3.0-17ubuntu1~20.04)
+COLLECT_GCC_OPTIONS='-v' '-Q' '-O2' '--help=target' '-mtune=generic' '-march=x86-64'
+ /usr/lib/gcc/x86_64-linux-gnu/9/cc1 -v ... -fcf-protection ...
+ GNU C17 (Ubuntu 9.3.0-17ubuntu1~20.04) version 9.3.0 (x86_64-linux-gnu)
+...
+\end{verbatim}
+But CET should not be enabled in the kernel, it may break the Kprobes and bpf.
+Consequently, CET is disabled since v5.11.
+To guarantee the manual symbol lookup worked, we only use up to v5.4.
+
+Unfortunately, since Linux v5.7 \cpp|kallsyms_lookup_name| is also unexported, it needs certain trick to get the address of \cpp|kallsyms_lookup_name|.
+If \cpp|CONFIG_KPROBES| is enabled, we can facilitate the retrieval of function addresses by means of Kprobes to dynamically break into the specific kernel routine.
+Kprobes inserts a breakpoint at the entry of function by replacing the first bytes of the probed instruction.
+When a CPU hits the breakpoint, registers are stored, and the control will pass to Kprobes.
+It passes the addresses of the saved registers and the Kprobe struct to the handler you defined, then executes it.
+Kprobes can be registered by symbol name or address.
+Within the symbol name, the address will be handled by the kernel.
+
+Otherwise, specify the address of \cpp|sys_call_table| from \verb|/proc/kallsyms| and \verb|/boot/System.map| into \cpp|sym| parameter.
+Following is the sample usage for \verb|/proc/kallsyms|:
+\begin{verbatim}
+$ sudo grep sys_call_table /proc/kallsyms
+ffffffff82000280 R x32_sys_call_table
+ffffffff820013a0 R sys_call_table
+ffffffff820023e0 R ia32_sys_call_table
+$ sudo insmod syscall.ko sym=0xffffffff820013a0
+\end{verbatim}
+
+Using the address from \verb|/boot/System.map|, be careful about \verb|KASLR| (Kernel Address Space Layout Randomization).
+\verb|KASLR| may randomize the address of kernel code and data at every boot time, such as the static address listed in \verb|/boot/System.map| will offset by some entropy.
+The purpose of \verb|KASLR| is to protect the kernel space from the attacker.
+Without \verb|KASLR|, the attacker may find the target address in the fixed address easily.
+Then the attacker can use return-oriented programming to insert some malicious codes to execute or receive the target data by a tampered pointer.
+\verb|KASLR| mitigates these kinds of attacks because the attacker cannot immediately know the target address, but a brute-force attack can still work.
+If the address of a symbol in \verb|/proc/kallsyms| is different from the address in \verb|/boot/System.map|, \verb|KASLR| is enabled with the kernel, which your system running on.
+\begin{verbatim}
+$ grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+$ sudo grep sys_call_table /boot/System.map-$(uname -r)
+ffffffff82000300 R sys_call_table
+$ sudo grep sys_call_table /proc/kallsyms
+ffffffff820013a0 R sys_call_table
+# Reboot
+$ sudo grep sys_call_table /boot/System.map-$(uname -r)
+ffffffff82000300 R sys_call_table
+$ sudo grep sys_call_table /proc/kallsyms 
+ffffffff86400300 R sys_call_table
+\end{verbatim}
+If \verb|KASLR| is enabled, we have to take care of the address from \verb|/proc/kallsyms| each time we reboot the machine.
+In order to use the address from \verb|/boot/System.map|, make sure that \verb|KASLR| is disabled.
+You can add the \verb|nokaslr| for disabling \verb|KASLR| in next booting time:
+\begin{verbatim}
+$ grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+$ sudo perl -i -pe 'm/quiet/ and s//quiet nokaslr/' /etc/default/grub
+$ grep quiet /etc/default/grub
+GRUB_CMDLINE_LINUX_DEFAULT="quiet nokaslr splash"
+$ sudo update-grub
+\end{verbatim}
+
+For more information, check out the following:
+
+\begin{itemize}
+ \item \href{https://lwn.net/Articles/804849/}{Cook: Security things in Linux v5.3}
+ \item \href{https://lwn.net/Articles/12211/}{Unexporting the system call table}
+ \item \href{https://lwn.net/Articles/810077/}{Control-flow integrity for the kernel}
+ \item \href{https://lwn.net/Articles/813350/}{Unexporting kallsyms\_lookup\_name()}
+ \item \href{https://www.kernel.org/doc/Documentation/kprobes.txt}{Kernel Probes (Kprobes)}
+ \item \href{https://lwn.net/Articles/569635/}{Kernel address space layout randomization}
+\end{itemize}
+
 The source code here is an example of such a kernel module.
 We want to ``spy'' on a certain user, and to \cpp|pr_info()| a message whenever that user opens a file.
 Towards this end, we replace the system call to open a file with our own function, called \cpp|our_sys_open|.
@@ -1228,11 +1481,6 @@ Unfortunately, \cpp|B_open| will still try to call \cpp|A_open| which is no long
 Note that all the related problems make syscall stealing unfeasible for production use.
 In order to keep people from doing potential harmful things \cpp|sys_call_table| is no longer exported.
 This means, if you want to do something more than a mere dry run of this example, you will have to patch your current kernel in order to have \cpp|sys_call_table| exported.
-In the example directory you will find a README and the patch.
-As you can imagine, such modifications are not to be taken lightly.
-Do not try this on valuable systems (ie systems that you do not own - or cannot restore easily).
-You will need to get the complete sourcecode of this guide as a tarball in order to get the patch and the README.
-Depending on your kernel version, you might even need to hand apply the patch.
 
 \samplec{examples/syscall.c}
 
@@ -1366,6 +1614,16 @@ An example is shown below.
 
 \samplec{examples/example_atomic.c}
 
+Before the C11 standard adopts the built-in atomic types, the kernel already provided a small set of atomic types by using a bunch of tricky architecture-specific codes.
+Implementing the atomic types by C11 atomics may allow the kernel to throw away the architecture-specific codes and letting the kernel code be more friendly to the people who understand the standard.
+But there are some problems, such as the memory model of the kernel doesn't match the model formed by the C11 atomics.
+For further details, see:
+\begin{itemize}
+ \item \href{https://www.kernel.org/doc/Documentation/atomic_t.txt}{kernel documentation of atomic types}
+ \item \href{https://lwn.net/Articles/691128/}{Time to move to C11 atomics?}
+ \item \href{https://lwn.net/Articles/698315/}{Atomic usage patterns in the kernel}
+\end{itemize}
+
 % FIXME: we should rewrite this section
 \section{Replacing Print Macros}
 \label{sec:print_macros}
@@ -1388,6 +1646,47 @@ In certain conditions, you may desire a simpler and more direct way to communica
 Flashing keyboard LEDs can be such a solution: It is an immediate way to attract attention or to display a status condition.
 Keyboard LEDs are present on every hardware, they are always visible, they do not need any setup, and their use is rather simple and non-intrusive, compared to writing to a tty or a file.
 
+From v4.14 to v4.15, the timer API made a series of changes to improve memory safety.
+A buffer overflow in the area of a \cpp|timer_list| structure may be able to overwrite the \cpp|function| and \cpp|data| fields, providing the attacker with a way to use return-object programming (ROP) to call arbitrary functions within the kernel.
+Also, the function prototype of the callback, containing a \cpp|unsigned long| argument, will prevent work from any type checking.
+Furthermore, the function prototype with \cpp|unsigned long| argument may be an obstacle to the \textit{control-flow integrity}.
+Thus, it is better to use a unique prototype to separate from the cluster that takes an \cpp|unsigned long| argument.
+The timer callback should be passed a pointer to the \cpp|timer_list| structure rather than an \cpp|unsigned long| argument.
+Then, it wraps all the information the callback needs, including the \cpp|timer_list| structure, into a larger structure, and it can use the \cpp|container_of| macro instead of the \cpp|unsigned long| value.
+
+Before Linux v4.14, \cpp|setup_timer| was used to initialize the timer and the \cpp|timer_list| structure looked like:
+\begin{code}
+struct timer_list {
+    unsigned long expires;
+    void (*function)(unsigned long);
+    unsigned long data;
+    u32 flags;
+    /* ... */
+};
+
+void setup_timer(struct timer_list *timer, void (*callback)(unsigned long),
+                 unsigned long data);
+\end{code}
+
+Since Linux v4.14, \cpp|timer_setup| is adopted and the kernel step by step converting to \cpp|timer_setup| from \cpp|setup_timer|.
+One of the reasons why API was changed is it need to coexist with the old version interface.
+Moreover, the \cpp|timer_setup| was implemented by \cpp|setup_timer| at first.
+\begin{code}
+void timer_setup(struct timer_list *timer,
+                 void (*callback)(struct timer_list *), unsigned int flags);
+\end{code}
+
+The \cpp|setup_timer| was then removed since v4.15.
+As a result, the \cpp|timer_list| structure had changed to the following.
+\begin{code}
+struct timer_list {
+    unsigned long expires;
+    void (*function)(struct timer_list *);
+    u32 flags;
+    /* ... */
+};
+\end{code}
+
 The following source code illustrates a minimal kernel module which, when loaded, starts blinking the keyboard LEDs until it is unloaded.
 
 \samplec{examples/kbleds.c}
@@ -1400,8 +1699,8 @@ If you find yourself porting the kernel to some new and former unsupported archi
 Logging over a netconsole might also be worth a try.
 
 While you have seen lots of stuff that can be used to aid debugging here, there are some things to be aware of. Debugging is almost always intrusive.
-Adding debug code can change the situation enough to make the bug seem to dissappear.
-Thus you should try to keep debug code to a minimum and make sure it does not show up in production code.
+Adding debug code can change the situation enough to make the bug seem to disappear.
+Thus, you should keep debug code to a minimum and make sure it does not show up in production code.
 
 \section{Scheduling Tasks}
 \label{sec:scheduling_tasks}
@@ -1429,9 +1728,9 @@ The tasklet callback runs in atomic context, inside a software interrupt, meanin
 Also, the kernel only allows one instance of any given tasklet to be running at any given time; multiple different tasklet callbacks can run in parallel.
 
 In recent kernels, tasklets can be replaced by workqueues, timers, or threaded interrupts.\footnote{The goal of threaded interrupts is to push more of the work to separate threads, so that the minimum needed for acknowledging an interrupt is reduced, and therefore the time spent handling the interrupt (where it can't handle any other interrupts at the same time) is reduced.
-See https://lwn.net/Articles/302043/}
+See \url{https://lwn.net/Articles/302043/}.}
 While the removal of tasklets remains a longer-term goal, the current kernel contains more than a hundred uses of tasklets.
-Now developers are proceeding with the API changes and the macro \cpp|DECLARE_TASKLET_OLD| exists for compatibiity.
+Now developers are proceeding with the API changes and the macro \cpp|DECLARE_TASKLET_OLD| exists for compatibility.
 For further information, see \url{https://lwn.net/Articles/830964/}.
 
 \subsection{Work queues}
@@ -1463,8 +1762,12 @@ If at all possible, it is better to declare an interrupt handler to be long.
 When the CPU receives an interrupt, it stops whatever it is doing (unless it is processing a more important interrupt, in which case it will deal with this one only when the more important one is done),
 saves certain parameters on the stack and calls the interrupt handler.
 This means that certain things are not allowed in the interrupt handler itself, because the system is in an unknown state.
-The solution to this problem is for the interrupt handler to do what needs to be done immediately, usually read something from the hardware or send something to the hardware, and then schedule the handling of the new information at a later time (this is called the "bottom half") and return.
-The kernel is then guaranteed to call the bottom half as soon as possible -- and when it does, everything allowed in kernel modules will be allowed.
+% TODO: add some diagrams
+Linux kernel solves the problem by splitting interrupt handling into two parts.
+The first part executes right away and masks the interrupt line.
+Hardware interrupts must be handled quickly, and that is why we need the second part to handle the heavy work deferred from an interrupt handler.
+Historically, BH (Linux naming for \textit{Bottom Halves}) statistically book-keeps the deferred functions.
+\textbf{Softirq} and its higher level abstraction, \textbf{Tasklet}, replace BH since Linux 2.3.
 
 The way to implement this is to call \cpp|request_irq()| to get your interrupt handler called when the relevant IRQ is received.
 
@@ -1519,12 +1822,11 @@ Here is a demonstration of how to calculate a sha256 hash within a kernel module
 
 \samplec{examples/cryptosha256.c}
 
-Make and install the module:
+Install the module:
 
 \begin{codebash}
-make
 sudo insmod cryptosha256.ko
-dmesg
+sudo dmesg
 \end{codebash}
 
 And you should see that the hash was calculated for the test string.
@@ -1588,13 +1890,8 @@ You might need to do this for a short time and that is OK, but if you do not ena
 For people seriously interested in kernel programming, I recommend \href{https://kernelnewbies.org}{kernelnewbies.org} and the \src{Documentation} subdirectory within the kernel source code which is not always easy to understand but can be a starting point for further investigation.
 Also, as Linus Torvalds said, the best way to learn the kernel is to read the source code yourself.
 
-If you are interested in more examples of short kernel modules then searching on sites such as Github and Gitlab is a good way to start, although there is a lot of duplication of older LKMPG examples which may not compile with newer kernel versions.
-You will also be able to find examples of the use of kernel modules to attack or compromise systems or exfiltrate data and those can be useful for thinking about how to defend systems and learning about existing security mechanisms within the kernel.
-
-I hope I have helped you in your quest to become a better programmer, or at least to have fun through technology.
-And, if you do write useful kernel modules, I hope you publish them under the GPL, so I can use them too.
-
 If you would like to contribute to this guide or notice anything glaringly wrong, please create an issue at \url{https://github.com/sysprog21/lkmpg}.
+Your pull requests will be appreciated.
 
 Happy hacking!
 \end{document}
